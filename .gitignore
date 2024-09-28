@@ -1,2 +1,4 @@
 __pycache__/
 gettests/
+dist/
+src/reugin.egg-info/
