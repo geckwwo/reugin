@@ -16,6 +16,7 @@ async def root_route(req: reugin.Request):
 ```
 and run this with any ASGI server (for example, Uvicorn):
 > $ uvicorn server:app
+
 .. where `server` is the filename, and `app` is the `reugin.Reugin` instance.
 
 # Licensing
