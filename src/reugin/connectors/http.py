@@ -46,7 +46,7 @@ class HTTPConnector(BaseConnector):
                 return handler, groups
         return None, None
     
-    async def process_scope(self, scope, receive, send, radiant):
+    async def process_scope(self, scope, receive, send, reugin):
         if scope['type'] != 'http':
             return False
         
@@ -68,7 +68,7 @@ class HTTPConnector(BaseConnector):
                     body += recvscope['body']
                     if recvscope['more_body'] == False:
                         break
-                    assert len(body) >= radiant.max_request_body and radiant.max_request_body >= 0, "Max body length exceeded"
+                    assert len(body) >= reugin.max_request_body and reugin.max_request_body >= 0, "Max body length exceeded"
                 req.body = body.decode()
                 resp: Response = await route[0](req, *route[1])
                 if not isinstance(resp, Response):

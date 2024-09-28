@@ -2,10 +2,10 @@ import logging
 
 RD_VER_TRIPLE = (0, 2, 1)
 RD_VER = ".".join(map(str, RD_VER_TRIPLE))
-RD_ERR_404 = f"<center><h1>404 Not Found</h1><hr><small>Radiant {RD_VER}</small></center>".encode()
-RD_ERR_500 = f"<center><h1>500 Internal Server Error</h1><hr><small>Radiant {RD_VER}</small></center>".encode()
+RD_ERR_404 = f"<center><h1>404 Not Found</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
+RD_ERR_500 = f"<center><h1>500 Internal Server Error</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
 
-class Radiant:
+class Reugin:
     max_request_body = 256 * 1024
 
     def __init__(self):
@@ -44,12 +44,12 @@ class Radiant:
 
     def apply_defaults(self):
         class LifespanConnector:
-            async def process_scope(self_dc, scope, receive, send, radiant):
+            async def process_scope(self_dc, scope, receive, send, reugin):
                 if scope['type'] == 'lifespan':
                     while True:
                         message = await receive()
                         if message['type'] == 'lifespan.startup':
-                            logging.info(f"Radiant {RD_VER} is starting up!")
+                            logging.info(f"Reugin {RD_VER} is starting up!")
                             await send({'type': 'lifespan.startup.complete'})
                         elif message['type'] == 'lifespan.shutdown':
                             logging.info(f"Shutting down!")
@@ -72,7 +72,7 @@ class Radiant:
         lc = self.connect(LifespanConnector(), priority=20000)
 
         @self.errorhook(200)
-        async def on_500(scope, receive, send, radiant):
+        async def on_500(scope, receive, send, reugin):
             await send({
                 'type': 'http.response.start',
                 'status': 500,

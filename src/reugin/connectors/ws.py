@@ -91,7 +91,7 @@ class WebSocketConnector(BaseConnector):
                 return handler, groups
         return None, None
 
-    async def process_scope(self, scope, receive, send, radiant):
+    async def process_scope(self, scope, receive, send, reugin):
         if scope['type'] != 'websocket':
             return False
         

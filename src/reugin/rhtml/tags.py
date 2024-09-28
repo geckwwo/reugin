@@ -19,11 +19,11 @@ class Tag:
             value = str(value)
         elif isinstance(value, EmptyAttr):
             return f'{name}'
-        elif hasattr(value, "_radiant_feature_rpc_call"):
+        elif hasattr(value, "_reugin_feature_rpc_call"):
             raise NotImplementedError("RPC calls as attribute callbacks are not implemented yet")
             value = f'alert(&quot;RPC Calls are WIP&quot;)'
-        elif hasattr(value, "_radiant_unjustpython_jsname"):
-            value = value._radiant_unjustpython_jsname + "();"
+        elif hasattr(value, "_reugin_unjustpython_jsname"):
+            value = value._reugin_unjustpython_jsname + "();"
         else:
             raise NotImplementedError(f"Cannot serialize attribute of type {type(value)}")
         

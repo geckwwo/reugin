@@ -97,10 +97,10 @@ class UnjustContext:
                 name = fn.__code__.co_name
             assert name not in self.ctx, "This function is already registered."
             self.ctx[name] = fn
-            fn._radiant_unjustpython_jsname = name
+            fn._reugin_unjustpython_jsname = name
             def inner2(*a, **kw):
                 raise RuntimeError("This function is intended to be called from JavaScript context.")
-            inner2._radiant_unjustpython_jsname = name
+            inner2._reugin_unjustpython_jsname = name
             return inner2
         return inner
     
@@ -110,10 +110,10 @@ class UnjustContext:
             src = inspect.getsource(fn)
             src = textwrap.dedent(src)
             b += UnjustPythonTranslator().generate_js_code(fn_name, src)
-        return IncludeString("<script>/* Powered by Radiant's UnjustPython code translator -- this was automatically transpiled from Python source code to JavaScript -- Radiant Framework, UnjustPython transpiler (c) 2024 by geckonerd */"+ (b) +"</script>")
+        return IncludeString("<script>/* Powered by Reugin's UnjustPython code translator -- this was automatically transpiled from Python source code to JavaScript -- Reugin Framework, UnjustPython transpiler (c) 2024 by geckonerd */"+ (b) +"</script>")
 
 def js(function):
-    warnings.warn(DeprecationWarning("Radiant's Python-to-JavaScript translation layer is deprecated. It is highly unstable and is not usable in 95% of cases and will be removed in the next major update. Use JavaScript or UnjustPython (this package)."))
+    warnings.warn(DeprecationWarning("Reugin's Python-to-JavaScript translation layer is deprecated. It is highly unstable and is not usable in 95% of cases and will be removed in the next major update. Use JavaScript or UnjustPython (this package)."))
     src = inspect.getsource(function)
     src = textwrap.dedent(src)
     return  UnjustPythonTranslator().generate_js_code(function.__code__.co_name, src)

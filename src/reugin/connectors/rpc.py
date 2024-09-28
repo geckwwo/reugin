@@ -29,7 +29,7 @@ class RPCConnector(BaseConnector):
             return fn
         return inner
     
-    async def process_scope(self, scope, receive, send, radiant):
+    async def process_scope(self, scope, receive, send, reugin):
         if scope['type'] != 'http':
             return False
 
@@ -42,11 +42,11 @@ class RPCConnector(BaseConnector):
             req.addr = scope['client']
             req._asgi_scope = scope
 
-            if not req.path.startswith(f"/_radiantpowered_/rpc/{self.rpc_scope}/"):
+            if not req.path.startswith(f"/_reuginpowered_/rpc/{self.rpc_scope}/"):
                 return False
             
             for rpc_name, rpc in self.rpcs.items():
-                if req.path == f"/_radiantpowered_/rpc/{self.rpc_scope}/{rpc_name}":
+                if req.path == f"/_reuginpowered_/rpc/{self.rpc_scope}/{rpc_name}":
                     body = b''
                     while True:
                         recvscope = await receive()
@@ -55,7 +55,7 @@ class RPCConnector(BaseConnector):
                         body += recvscope['body']
                         if recvscope['more_body'] == False:
                             break
-                        assert len(body) >= radiant.max_request_body and radiant.max_request_body >= 0, "Max body length exceeded"
+                        assert len(body) >= reugin.max_request_body and reugin.max_request_body >= 0, "Max body length exceeded"
                     req.body = body.decode()
                     try:
                         await JSONResponse(200, json.dumps(await rpc(req, *json.loads(urllib.parse.unquote(req.params.get("args", '%5B%5D')))))).send(send)
