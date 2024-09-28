@@ -8,5 +8,4 @@ class Methods(enum.Enum):
     TRACE = "TRACE"
     PUT = "PUT"
     DELETE = "DELETE"
-    POST = "POST"
     PATCH = "PATCH"
