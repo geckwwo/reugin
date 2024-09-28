@@ -2,16 +2,10 @@ from ..methods import Methods
 from ..response import BinaryResponse, Response
 from ..request import Request
 from ..rhtml import Tag
+from ..route_match import match_route_with_method
 from .base import BaseConnector
 import json
-import re
 
-MATCHING_TYPES = {
-    'alphanumeric': r'\w+',   # Буквы или цифры
-    'path': r'[\w/]+',        # Путь с разделителями '/'
-    'any': r'.+',             # Любые символы (минимум один),
-    'filepath': r'(?!\/)(?!.*\/\.+\/)[\/aA-zZ0-9 \.]+'
-}
 
 class HTTPConnector(BaseConnector):
     def __init__(self):
@@ -23,28 +17,6 @@ class HTTPConnector(BaseConnector):
                 self.routes[route, method] = fn
             return fn
         return inner
-    
-    def match_route(self, path, method):
-        # ChatGPT made this pattern matching code :fire:
-        def check_and_extract(path, pattern):
-            escaped_pattern = re.escape(pattern)
-            
-            for type_name, regex in MATCHING_TYPES.items():
-                escaped_pattern = escaped_pattern.replace(re.escape(f"{{{type_name}}}"), f"({regex})")
-            
-            escaped_pattern = escaped_pattern.replace(re.escape("{}"), f"({MATCHING_TYPES['any']})")
-            match = re.match(f"^{escaped_pattern}$", path)
-            
-            if match:
-                return match.groups()
-            else:
-                return None
-        
-        for route, handler in self.routes.items():
-            # TODO: some sort of pattern matching
-            if route[1] == method and (groups := check_and_extract(path, route[0])) is not None:
-                return handler, groups
-        return None, None
     
     async def process_scope(self, scope, receive, send, reugin):
         if scope['type'] != 'http':
@@ -59,7 +31,7 @@ class HTTPConnector(BaseConnector):
             req.addr = scope['client']
             req._asgi_scope = scope
 
-            if (route := self.match_route(req.path, Methods(scope['method'].upper())))[0] != None:
+            if (route := match_route_with_method(req.path, Methods(scope['method'].upper())))[0] != None:
                 body = b''
                 while True:
                     recvscope = await receive()

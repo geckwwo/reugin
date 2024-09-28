@@ -1,7 +1,7 @@
 from .base import BaseConnector
 from .http import MATCHING_TYPES
 import asyncio
-import re
+from ..route_match import match_route
 
 class WebSocketClosedException(Exception):
     def __init__(self, wsconn, code):
@@ -69,27 +69,6 @@ class WebSocketConnector(BaseConnector):
             self.wsroutes[ws_route] = fn
             return fn
         return inner
-    
-    def match_route(self, path):
-        # ChatGPT made this pattern matching code :fire:
-        def check_and_extract(path, pattern):
-            escaped_pattern = re.escape(pattern)
-            
-            for type_name, regex in MATCHING_TYPES.items():
-                escaped_pattern = escaped_pattern.replace(re.escape(f"{{{type_name}}}"), f"({regex})")
-            
-            escaped_pattern = escaped_pattern.replace(re.escape("{}"), f"({MATCHING_TYPES['any']})")
-            match = re.match(f"^{escaped_pattern}$", path)
-            
-            if match:
-                return match.groups()
-            else:
-                return None
-        
-        for route, handler in self.wsroutes.items():
-            if (groups := check_and_extract(path, route)) is not None:
-                return handler, groups
-        return None, None
 
     async def process_scope(self, scope, receive, send, reugin):
         if scope['type'] != 'websocket':
@@ -105,7 +84,7 @@ class WebSocketConnector(BaseConnector):
             req._asgi_recv = receive
             req._asgi_send = send
             
-            if (route := self.match_route(req.path))[0] != None:
+            if (route := match_route(req.path))[0] != None:
                 while True:
                     wsscope = await receive()
                     if wsscope['type'] == "websocket.connect":
