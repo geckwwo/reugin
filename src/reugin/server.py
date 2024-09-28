@@ -1,4 +1,5 @@
 import logging
+from .connectors.base import BaseConnector
 
 RD_VER_TRIPLE = (0, 2, 3)
 RD_VER = ".".join(map(str, RD_VER_TRIPLE))
@@ -29,12 +30,12 @@ class Reugin:
     # ASGI Application
     async def __call__(self, scope, receive, send):
         try:
-            for priority, handlers in sorted(self.connectors.items(), key=lambda pair: pair[0]):
+            for _, handlers in sorted(self.connectors.items(), key=lambda pair: pair[0]):
                 for handler in handlers:
                     if await handler.process_scope(scope, receive, send, self):
                         return
         except Exception as e:
-            for priority, errorhooks in sorted(self.errorhooks.items(), key=lambda pair: pair[0]):
+            for _, errorhooks in sorted(self.errorhooks.items(), key=lambda pair: pair[0]):
                 for errorhook in errorhooks:
                     if await errorhook(scope, receive, send, self):
                         return
@@ -43,11 +44,15 @@ class Reugin:
         raise NotImplementedError("This was not implemented!")
 
     def apply_defaults(self):
-        class LifespanConnector:
+        self.lifespan_handlers = []
+
+        class DefaultsConnector(BaseConnector):
             async def process_scope(self_dc, scope, receive, send, reugin):
                 if scope['type'] == 'lifespan':
                     while True:
                         message = await receive()
+                        map(lambda h: h(message), self.lifespan_handlers)
+
                         if message['type'] == 'lifespan.startup':
                             logging.info(f"Reugin {RD_VER} is starting up!")
                             await send({'type': 'lifespan.startup.complete'})
@@ -69,7 +74,7 @@ class Reugin:
                     })
                     return True
         
-        lc = self.connect(LifespanConnector(), priority=20000)
+        self.connect(DefaultsConnector(), priority=20000)
 
         @self.errorhook(200)
         async def on_500(scope, receive, send, reugin):
