@@ -1,6 +1,6 @@
 import logging
 
-RD_VER_TRIPLE = (0, 2, 2)
+RD_VER_TRIPLE = (0, 2, 3)
 RD_VER = ".".join(map(str, RD_VER_TRIPLE))
 RD_ERR_404 = f"<center><h1>404 Not Found</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
 RD_ERR_500 = f"<center><h1>500 Internal Server Error</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
