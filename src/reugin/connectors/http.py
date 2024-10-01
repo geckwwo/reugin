@@ -31,7 +31,7 @@ class HTTPConnector(BaseConnector):
             req.addr = scope['client']
             req._asgi_scope = scope
 
-            if (route := match_route_with_method(req.path, Methods(scope['method'].upper())))[0] != None:
+            if (route := match_route_with_method(req.path, Methods(scope['method'].upper()), self.routes))[0] != None:
                 body = b''
                 while True:
                     recvscope = await receive()
