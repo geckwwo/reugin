@@ -1,7 +1,7 @@
 import logging
 from .connectors.base import BaseConnector
 
-RD_VER_TRIPLE = (0, 2, 3)
+RD_VER_TRIPLE = (0, 2, 4)
 RD_VER = ".".join(map(str, RD_VER_TRIPLE))
 RD_ERR_404 = f"<center><h1>404 Not Found</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
 RD_ERR_500 = f"<center><h1>500 Internal Server Error</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
@@ -37,7 +37,7 @@ class Reugin:
         except Exception as e:
             for _, errorhooks in sorted(self.errorhooks.items(), key=lambda pair: pair[0]):
                 for errorhook in errorhooks:
-                    if await errorhook(scope, receive, send, self):
+                    if await errorhook(scope, receive, send, self, e):
                         return
             raise e # did not handle - raise, asgi server will handle this itself
             
@@ -77,7 +77,7 @@ class Reugin:
         self.connect(DefaultsConnector(), priority=20000)
 
         @self.errorhook(200)
-        async def on_500(scope, receive, send, reugin):
+        async def on_500(scope, receive, send, reugin, exc):
             await send({
                 'type': 'http.response.start',
                 'status': 500,
