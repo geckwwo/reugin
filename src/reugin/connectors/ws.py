@@ -1,5 +1,4 @@
 from .base import BaseConnector
-from .http import MATCHING_TYPES
 import asyncio
 from ..route_match import match_route
 
