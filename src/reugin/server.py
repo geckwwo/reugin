@@ -1,7 +1,7 @@
 import logging
 from .connectors.base import BaseConnector
 
-RD_VER_TRIPLE = (0, 2, 4)
+RD_VER_TRIPLE = (0, 2, 5)
 RD_VER = ".".join(map(str, RD_VER_TRIPLE))
 RD_ERR_404 = f"<center><h1>404 Not Found</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
 RD_ERR_500 = f"<center><h1>500 Internal Server Error</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
