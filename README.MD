@@ -8,7 +8,7 @@ import reugin
 import reugin.rhtml as h
 
 app = reugin.Reugin()
-http = reugin.connectors.http.HTTPConnector()
+http = app.connect(reugin.connectors.http.HTTPConnector())
 
 @http.route("/")
 async def root_route(req: reugin.Request):
