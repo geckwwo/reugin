@@ -18,6 +18,23 @@ class HTTPConnector(BaseConnector):
             return fn
         return inner
     
+    def get(self, route, other_methods=None):
+        return self.route(route, [Methods.GET] + (other_methods or []))
+    def post(self, route, other_methods=None):
+        return self.route(route, [Methods.POST] + (other_methods or []))
+    def head(self, route, other_methods=None):
+        return self.route(route, [Methods.HEAD] + (other_methods or []))
+    def options(self, route, other_methods=None):
+        return self.route(route, [Methods.OPTIONS] + (other_methods or []))
+    def trace(self, route, other_methods=None):
+        return self.route(route, [Methods.TRACE] + (other_methods or []))
+    def put(self, route, other_methods=None):
+        return self.route(route, [Methods.PUT] + (other_methods or []))
+    def delete(self, route, other_methods=None):
+        return self.route(route, [Methods.DELETE] + (other_methods or []))
+    def patch(self, route, other_methods=None):
+        return self.route(route, [Methods.PATCH] + (other_methods or []))
+    
     async def process_scope(self, scope, receive, send, reugin):
         if scope['type'] != 'http':
             return False
