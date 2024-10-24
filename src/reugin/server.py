@@ -41,7 +41,7 @@ class Reugin:
                         return
             raise e # did not handle - raise, asgi server will handle this itself
             
-        raise NotImplementedError("This was not implemented!")
+        raise NotImplementedError("This route has no implementation - defaults were not applied, so this error is thrown.")
 
     def apply_defaults(self):
         self.lifespan_handlers = []
