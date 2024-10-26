@@ -17,5 +17,5 @@ class Request:
         import json
         return json.loads(self.body.decode())
     
-    def get_body_json(self):
+    def get_body_multipart_formdata(self):
         return _pmfd(self.headers, self.body)
