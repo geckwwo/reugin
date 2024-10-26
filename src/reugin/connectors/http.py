@@ -55,10 +55,11 @@ class HTTPConnector(BaseConnector):
                     assert recvscope['type'] == 'http.request'
 
                     body += recvscope['body']
+                    # bugfix: body length should be checked with <=
+                    assert len(body) <= reugin.max_request_body, "Max body length exceeded" 
                     if recvscope['more_body'] == False:
                         break
-                    assert len(body) >= reugin.max_request_body and reugin.max_request_body >= 0, "Max body length exceeded"
-                req.body = body.decode()
+                req.body = body # removed .decode() - body may be binary if, for example, form with binary file is submitted
                 resp: Response = await route[0](req, *route[1])
                 if not isinstance(resp, Response):
                     if isinstance(resp, Tag):

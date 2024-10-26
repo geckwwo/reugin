@@ -7,3 +7,10 @@ class Request:
         self.addr = None
         self.headers = {}
         self._asgi_scope = {}
+    
+    def get_body_json(self):
+        assert "content-type" in self.headers, "Request has no Content-Type header"
+        assert self.headers.get("content-type").split(";")[0].strip().lower() == "application/json", "Content-Type is not JSON"
+
+        import json
+        return json.loads(self.body.decode())
