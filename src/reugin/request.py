@@ -1,3 +1,5 @@
+from .parsers.multipartformdata import parse_multipart_formdata as _pmfd
+
 class Request:
     def __init__(self):
         self.path = "/"
@@ -14,3 +16,6 @@ class Request:
 
         import json
         return json.loads(self.body.decode())
+    
+    def get_body_json(self):
+        return _pmfd(self.headers, self.body)
