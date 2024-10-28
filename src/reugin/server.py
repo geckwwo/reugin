@@ -78,6 +78,7 @@ class Reugin:
 
         @self.errorhook(200)
         async def on_500(scope, receive, send, reugin, exc):
+            logging.exception(exc)
             await send({
                 'type': 'http.response.start',
                 'status': 500,
