@@ -45,19 +45,23 @@ class Reugin:
 
     def apply_defaults(self):
         self.lifespan_handlers = []
+        self.lifespan_handlers_stop = []
 
         class DefaultsConnector(BaseConnector):
             async def process_scope(self_dc, scope, receive, send, reugin):
                 if scope['type'] == 'lifespan':
                     while True:
                         message = await receive()
-                        map(lambda h: h(message), self.lifespan_handlers)
 
                         if message['type'] == 'lifespan.startup':
                             logging.info(f"Reugin {RD_VER} is starting up!")
+                            for handler in self.lifespan_handlers:
+                                await handler()
                             await send({'type': 'lifespan.startup.complete'})
                         elif message['type'] == 'lifespan.shutdown':
                             logging.info(f"Shutting down!")
+                            for handler in self.lifespan_handlers_stop:
+                                await handler()
                             await send({'type': 'lifespan.shutdown.complete'})
                             return
                 elif scope['type'] == 'http':
