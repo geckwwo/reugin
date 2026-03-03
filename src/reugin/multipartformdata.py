@@ -1,13 +1,16 @@
+from typing import List, Tuple
+from .types import HeadersType
+
 class MultipartFormDataEntry:
-    def __init__(self, data: bytes, content_type: str, name: str, filename: str = None, headers: dict = None):
+    def __init__(self, data: bytes, content_type: str, name: str, filename: str | None = None, headers: HeadersType | None = None):
         self.data = data
         self.content_type = content_type
         self.name = name
         self.filename = filename
-        self.headers = headers if headers is not None else {}
+        self.headers: HeadersType = headers if headers is not None else {}
 
     @classmethod
-    def from_base(cls, body: bytes, headers: dict):
+    def from_base(cls, body: bytes, headers: HeadersType):
         assert "content-disposition" in headers, "Content-Disposition is expected"
         content_disp = list(i.strip() for i in headers['content-disposition'].split(";"))
         assert content_disp[0] == "form-data", "Content-Disposition should be form-data"
@@ -22,17 +25,17 @@ class MultipartFormDataEntry:
         if filename is not None and filename.startswith("\"") and filename.endswith("\""):
             filename = filename[1:-1]
 
-        return cls(body, headers.get("content-type"), name, filename, headers)
+        return cls(body, headers["content-type"], name, filename, headers)
     
     def __repr__(self):
         return f"{self.__class__.__name__}({repr(self.name)}, {repr(self.data)})"
 
-def parse_multipart_formdata(headers: dict, body: bytes):
+def parse_multipart_formdata(headers: HeadersType, body: bytes):
     assert "content-type" in headers, "Content-Type is expected"
-    assert headers.get("content-type").split(";")[0].strip().lower() == "multipart/form-data", "Content-Type is not multipart/form-data"
-    assert int(headers.get("content-length")) == len(body), "body size is different from content-length"
+    assert headers["content-type"].split(";")[0].strip().lower() == "multipart/form-data", "Content-Type is not multipart/form-data"
+    assert int(headers["content-length"]) == len(body), "body size is different from content-length"
 
-    ct_attributes = dict(x.strip().split("=") for x in headers.get("content-type").split(";")[1:])
+    ct_attributes = dict(x.strip().split("=") for x in headers["content-type"].split(";")[1:])
     assert "boundary" in ct_attributes, "multipart/form-data should have boundary attribute in content-type"
     boundary_base = ct_attributes['boundary']
     boundary_start = ("--" + boundary_base).encode()
@@ -44,7 +47,7 @@ def parse_multipart_formdata(headers: dict, body: bytes):
     del entries[-1]
 
     entries = [entry[2:-2] for entry in entries]
-    entries_with_headers = []
+    entries_with_headers: List[Tuple[bytes, HeadersType]] = []
     for entry in entries:
         entry_headers = entry.split(b"\r\n\r\n")[0]
         entry_content = b"\r\n\r\n".join(entry.split(b"\r\n\r\n")[1:])

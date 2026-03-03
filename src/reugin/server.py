@@ -1,26 +1,34 @@
 import logging
 from .connectors.base import BaseConnector
+from typing import Dict, List
+from .types import ErrorHookType, ScopeType, SendType, ReuginPlaceholder, ReceiveType, LifespanHandler
 
 RD_VER_TRIPLE = (0, 2, 8)
 RD_VER = ".".join(map(str, RD_VER_TRIPLE))
 RD_ERR_404 = f"<center><h1>404 Not Found</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
 RD_ERR_500 = f"<center><h1>500 Internal Server Error</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
 
-class Reugin:
-    max_request_body = 256 * 1024
+class Reugin(ReuginPlaceholder):
+    max_request_body: int = 256 * 1024
 
-    def __init__(self):
-        self.connectors = {}
-        self.errorhooks = {}
+    def __init__(self, no_defaults: bool = False):
+        self.connectors: Dict[int, List[BaseConnector]] = {}
+        self.errorhooks: Dict[int, List[ErrorHookType]] = {}
+
+        self.lifespan_handlers_start: List[LifespanHandler] = []
+        self.lifespan_handlers_stop: List[LifespanHandler] = []
+
+        if not no_defaults:
+            self.apply_defaults()
     
-    def connect(self, connector, priority=100):
+    def connect(self, connector: BaseConnector, priority: int = 100):
         if priority not in self.connectors:
             self.connectors[priority] = []
         self.connectors[priority].append(connector)
         return connector
     
-    def errorhook(self, priority=100):
-        def inner(fn):
+    def errorhook(self, priority: int = 100):
+        def inner(fn: ErrorHookType):
             if priority not in self.errorhooks:
                 self.errorhooks[priority] = []
             self.errorhooks[priority].append(fn)
@@ -28,7 +36,7 @@ class Reugin:
         return inner
     
     # ASGI Application
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: ScopeType, receive: ReceiveType, send: SendType):
         try:
             for _, handlers in sorted(self.connectors.items(), key=lambda pair: pair[0]):
                 for handler in handlers:
@@ -44,26 +52,24 @@ class Reugin:
         raise NotImplementedError("This route has no implementation - defaults were not applied, so this error is thrown.")
 
     def apply_defaults(self):
-        self.lifespan_handlers = []
-        self.lifespan_handlers_stop = []
-
+        reugin_self = self
         class DefaultsConnector(BaseConnector):
-            async def process_scope(self_dc, scope, receive, send, reugin):
+            async def process_scope(self, scope: ScopeType, receive: ReceiveType, send: SendType, reugin: ReuginPlaceholder):
                 if scope['type'] == 'lifespan':
                     while True:
                         message = await receive()
 
                         if message['type'] == 'lifespan.startup':
                             logging.info(f"Reugin {RD_VER} is starting up!")
-                            for handler in self.lifespan_handlers:
+                            for handler in reugin_self.lifespan_handlers_start:
                                 await handler()
                             await send({'type': 'lifespan.startup.complete'})
                         elif message['type'] == 'lifespan.shutdown':
                             logging.info(f"Shutting down!")
-                            for handler in self.lifespan_handlers_stop:
+                            for handler in reugin_self.lifespan_handlers_stop:
                                 await handler()
                             await send({'type': 'lifespan.shutdown.complete'})
-                            return
+                            return True
                 elif scope['type'] == 'http':
                     await send({
                         'type': 'http.response.start',
@@ -77,11 +83,12 @@ class Reugin:
                         'body': RD_ERR_404
                     })
                     return True
+                return False
         
         self.connect(DefaultsConnector(), priority=20000)
 
         @self.errorhook(200)
-        async def on_500(scope, receive, send, reugin, exc):
+        async def on_500(scope: ScopeType, receive: ReceiveType, send: SendType, reugin: ReuginPlaceholder, exc: Exception): # pyright: ignore[reportUnusedFunction]
             logging.exception(exc)
             await send({
                 'type': 'http.response.start',
