@@ -1,104 +1,131 @@
+from __future__ import annotations
+
 import logging
+from collections.abc import Awaitable, Callable
+from typing import override
+
+from ._meta import VERSION
 from .connectors.base import BaseConnector
-from typing import Dict, List
-from .types import ErrorHookType, ScopeType, SendType, ReuginPlaceholder, ReceiveType, LifespanHandler
+from .errors import HTTPError
+from .response import error_page
+from .types import LifespanHandler, Receive, Scope, Send
 
-RD_VER_TRIPLE = (0, 2, 8)
-RD_VER = ".".join(map(str, RD_VER_TRIPLE))
-RD_ERR_404 = f"<center><h1>404 Not Found</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
-RD_ERR_500 = f"<center><h1>500 Internal Server Error</h1><hr><small>Reugin {RD_VER}</small></center>".encode()
+logger = logging.getLogger("reugin")
 
-class Reugin(ReuginPlaceholder):
+type ErrorHook = Callable[[Scope, Receive, Send, Reugin, Exception], Awaitable[bool]]
+"""`async def hook(scope, receive, send, app, exc) -> bool`: return True once the error is answered."""
+
+DEFAULTS_PRIORITY = 20000
+
+
+class Reugin:
+    """An ASGI application: a stack of connectors, tried in priority order (lowest first)."""
+
     max_request_body: int = 256 * 1024
+    """Larger request bodies are refused with 413. Negative means no limit."""
 
-    def __init__(self, no_defaults: bool = False):
-        self.connectors: Dict[int, List[BaseConnector]] = {}
-        self.errorhooks: Dict[int, List[ErrorHookType]] = {}
-
-        self.lifespan_handlers_start: List[LifespanHandler] = []
-        self.lifespan_handlers_stop: List[LifespanHandler] = []
-
+    def __init__(self, no_defaults: bool = False) -> None:
+        self.connectors: list[tuple[int, BaseConnector]] = []
+        self.errorhooks: list[tuple[int, ErrorHook]] = []
+        self.lifespan_handlers_start: list[LifespanHandler] = []
+        self.lifespan_handlers_stop: list[LifespanHandler] = []
         if not no_defaults:
             self.apply_defaults()
-    
-    def connect(self, connector: BaseConnector, priority: int = 100):
-        if priority not in self.connectors:
-            self.connectors[priority] = []
-        self.connectors[priority].append(connector)
+
+    def connect[C: BaseConnector](self, connector: C, priority: int = 100) -> C:
+        """Add a connector. Connectors with the same priority are tried in the order they were added."""
+        self.connectors.append((priority, connector))
+        self.connectors.sort(key=lambda pair: pair[0])
         return connector
-    
-    def errorhook(self, priority: int = 100):
-        def inner(fn: ErrorHookType):
-            if priority not in self.errorhooks:
-                self.errorhooks[priority] = []
-            self.errorhooks[priority].append(fn)
+
+    def errorhook[H: ErrorHook](self, priority: int = 100) -> Callable[[H], H]:
+        """Register a hook for errors raised while handling an event. The first hook to return True wins."""
+
+        def register(fn: H) -> H:
+            self.errorhooks.append((priority, fn))
+            self.errorhooks.sort(key=lambda pair: pair[0])
             return fn
-        return inner
-    
-    # ASGI Application
-    async def __call__(self, scope: ScopeType, receive: ReceiveType, send: SendType):
+
+        return register
+
+    def on_startup[F: LifespanHandler](self, fn: F) -> F:
+        self.lifespan_handlers_start.append(fn)
+        return fn
+
+    def on_shutdown[F: LifespanHandler](self, fn: F) -> F:
+        self.lifespan_handlers_stop.append(fn)
+        return fn
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
-            for _, handlers in sorted(self.connectors.items(), key=lambda pair: pair[0]):
-                for handler in handlers:
-                    if await handler.process_scope(scope, receive, send, self):
-                        return
+            for _, connector in self.connectors:
+                if await connector.process_scope(scope, receive, send, self):
+                    return
+        except HTTPError as e:
+            if scope["type"] != "http":
+                raise
+            await error_page(e.status, e.detail).send(send)
+            return
         except Exception as e:
-            for _, errorhooks in sorted(self.errorhooks.items(), key=lambda pair: pair[0]):
-                for errorhook in errorhooks:
-                    if await errorhook(scope, receive, send, self, e):
-                        return
-            raise e # did not handle - raise, asgi server will handle this itself
-            
-        raise NotImplementedError("This route has no implementation - defaults were not applied, so this error is thrown.")
+            for _, hook in self.errorhooks:
+                if await hook(scope, receive, send, self, e):
+                    return
+            raise  # nothing handled it: the ASGI server will
+        raise NotImplementedError(f"no connector handled this {scope['type']!r} event, and defaults are off")
 
-    def apply_defaults(self):
-        reugin_self = self
-        class DefaultsConnector(BaseConnector):
-            async def process_scope(self, scope: ScopeType, receive: ReceiveType, send: SendType, reugin: ReuginPlaceholder):
-                if scope['type'] == 'lifespan':
-                    while True:
-                        message = await receive()
+    def apply_defaults(self) -> None:
+        """Add the lifespan handling, the 404 page, and the 500 page with a logged traceback."""
+        self.connect(DefaultsConnector(), priority=DEFAULTS_PRIORITY)
+        self.errorhook(200)(on_500)
 
-                        if message['type'] == 'lifespan.startup':
-                            logging.info(f"Reugin {RD_VER} is starting up!")
-                            for handler in reugin_self.lifespan_handlers_start:
-                                await handler()
-                            await send({'type': 'lifespan.startup.complete'})
-                        elif message['type'] == 'lifespan.shutdown':
-                            logging.info(f"Shutting down!")
-                            for handler in reugin_self.lifespan_handlers_stop:
-                                await handler()
-                            await send({'type': 'lifespan.shutdown.complete'})
-                            return True
-                elif scope['type'] == 'http':
-                    await send({
-                        'type': 'http.response.start',
-                        'status': 404,
-                        'headers': [
-                            [b'Content-Type', b'text/html']
-                        ],
-                    })
-                    await send({
-                        'type': 'http.response.body',
-                        'body': RD_ERR_404
-                    })
-                    return True
+
+class DefaultsConnector(BaseConnector):
+    """Runs the app's startup and shutdown handlers, answers 404 and turns away unknown WebSocket routes."""
+
+    @override
+    async def process_scope(self, scope: Scope, receive: Receive, send: Send, reugin: Reugin) -> bool:
+        match scope["type"]:
+            case "lifespan":
+                await run_lifespan(receive, send, reugin)
+            case "http":
+                await error_page(404, "Not Found").send(send)
+            case "websocket":
+                await send({"type": "websocket.close", "code": 1000})  # before accept: the server answers 403
+            case _:
                 return False
-        
-        self.connect(DefaultsConnector(), priority=20000)
+        return True
 
-        @self.errorhook(200)
-        async def on_500(scope: ScopeType, receive: ReceiveType, send: SendType, reugin: ReuginPlaceholder, exc: Exception): # pyright: ignore[reportUnusedFunction]
-            logging.exception(exc)
-            await send({
-                'type': 'http.response.start',
-                'status': 500,
-                'headers': [
-                    [b'Content-Type', b'text/html']
-                ],
-            })
-            await send({
-                'type': 'http.response.body',
-                'body': RD_ERR_500
-            })
-            return True
+
+async def run_lifespan(receive: Receive, send: Send, reugin: Reugin) -> None:
+    while True:
+        message = await receive()
+        if message["type"] == "lifespan.startup":
+            logger.info("Reugin %s is starting up", VERSION)
+            try:
+                for handler in reugin.lifespan_handlers_start:
+                    await handler()
+            except Exception as e:
+                logger.exception("A startup handler failed")
+                await send({"type": "lifespan.startup.failed", "message": repr(e)})
+                return
+            await send({"type": "lifespan.startup.complete"})
+        elif message["type"] == "lifespan.shutdown":
+            logger.info("Shutting down")
+            try:
+                for handler in reugin.lifespan_handlers_stop:
+                    await handler()
+            except Exception as e:
+                logger.exception("A shutdown handler failed")
+                await send({"type": "lifespan.shutdown.failed", "message": repr(e)})
+                return
+            await send({"type": "lifespan.shutdown.complete"})
+            return
+
+
+async def on_500(scope: Scope, receive: Receive, send: Send, reugin: Reugin, exc: Exception) -> bool:
+    logger.error("Error while handling %s %s", scope["type"], scope.get("path", ""), exc_info=exc)
+    if scope["type"] == "http":
+        await error_page(500, "Internal Server Error").send(send)
+        return True
+    # A WebSocket handler's errors arrive after its connection is closed (with 1011); logging is all that's left.
+    return scope["type"] == "websocket"

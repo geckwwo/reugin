@@ -1,93 +1,93 @@
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Iterable
+from typing import TYPE_CHECKING, Any, override
+
 from ..methods import Methods
-from ..response import BinaryResponse, Response
 from ..request import Request
+from ..response import HTMLResponse, JSONResponse, Response
 from ..rhtml import Tag
 from ..route_match import match_route_with_method
-from ..types import ScopeType, ReceiveType, SendType, ReuginPlaceholder, HttpRouteHandler, JsonType
-from .base import BaseConnector
-from typing import Dict, Tuple, List
-import json
+from .base import BaseConnector, read_body
+
+if TYPE_CHECKING:
+    from ..server import Reugin
+    from ..types import JSON, Receive, Scope, Send
+
+type RouteResult = Response | Tag | str | JSON
+type RouteHandler = Callable[..., Awaitable[Any]]
+"""`async def handler(req: Request, *captures: str) -> RouteResult`"""
+type MethodNames = Iterable[Methods | str]
 
 
+def to_response(result: object) -> Response:
+    """Turn what a route returned into a Response: a tag or a string is HTML, a dict or a list is JSON."""
+    match result:
+        case Response():
+            return result
+        case Tag():
+            return HTMLResponse(200, result.render())
+        case str():
+            return HTMLResponse(200, result)
+        case dict() | list():
+            data: JSON = result  # pyright: ignore[reportUnknownVariableType]
+            return JSONResponse(200, data)
+        case _:
+            raise TypeError(f"a route returned {type(result).__name__}; expected a Response, a tag, str, dict or list")
 
 
 class HTTPConnector(BaseConnector):
-    def __init__(self):
-        self.routes: Dict[Tuple[str, Methods], HttpRouteHandler] = {}
+    def __init__(self) -> None:
+        self.routes: dict[tuple[str, Methods], RouteHandler] = {}
 
-    def route(self, route: str, methods: List[Methods] | None = None):
-        def inner(fn: HttpRouteHandler):
+    def route[H: RouteHandler](self, route: str, methods: MethodNames | None = None) -> Callable[[H], H]:
+        """Register a handler for `route` and the given methods (GET by default)."""
+
+        def register(fn: H) -> H:
             for method in methods or [Methods.GET]:
-                self.routes[route, method] = fn
+                self.routes[route, Methods(method.upper())] = fn
             return fn
-        return inner
-    
-    def get(self, route: str, other_methods: List[Methods] | None =None):
-        return self.route(route, [Methods.GET] + (other_methods or []))
-    def post(self, route: str, other_methods: List[Methods] | None=None):
-        return self.route(route, [Methods.POST] + (other_methods or []))
-    def head(self, route: str, other_methods: List[Methods] | None=None):
-        return self.route(route, [Methods.HEAD] + (other_methods or []))
-    def options(self, route: str, other_methods: List[Methods] | None=None):
-        return self.route(route, [Methods.OPTIONS] + (other_methods or []))
-    def trace(self, route: str, other_methods: List[Methods] | None=None):
-        return self.route(route, [Methods.TRACE] + (other_methods or []))
-    def put(self, route: str, other_methods: List[Methods] | None=None):
-        return self.route(route, [Methods.PUT] + (other_methods or []))
-    def delete(self, route: str, other_methods: List[Methods] | None=None):
-        return self.route(route, [Methods.DELETE] + (other_methods or []))
-    def patch(self, route: str, other_methods: List[Methods] | None=None):
-        return self.route(route, [Methods.PATCH] + (other_methods or []))
-    
-    async def process_scope(self, scope: ScopeType, receive: ReceiveType, send: SendType, reugin: ReuginPlaceholder):
-        if scope['type'] != 'http':
+
+        return register
+
+    def get[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.GET, *(other_methods or [])])
+
+    def post[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.POST, *(other_methods or [])])
+
+    def head[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.HEAD, *(other_methods or [])])
+
+    def options[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.OPTIONS, *(other_methods or [])])
+
+    def trace[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.TRACE, *(other_methods or [])])
+
+    def put[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.PUT, *(other_methods or [])])
+
+    def delete[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.DELETE, *(other_methods or [])])
+
+    def patch[H: RouteHandler](self, route: str, other_methods: MethodNames | None = None) -> Callable[[H], H]:
+        return self.route(route, [Methods.PATCH, *(other_methods or [])])
+
+    @override
+    async def process_scope(self, scope: Scope, receive: Receive, send: Send, reugin: Reugin) -> bool:
+        if scope["type"] != "http":
             return False
-        
-        req = Request()
-        req.path = scope['path']
-        req.method = scope['method']
-        req.params = dict(qc.split("=") for qc in scope['query_string'].decode().split("&")) if len(scope['query_string'].decode().strip()) > 0 else {}
+        try:
+            method = Methods(scope["method"].upper())
+        except ValueError:
+            return False  # a method Reugin doesn't route, such as PROPFIND
 
-        headers = scope.get("headers", [])
-        req.headers = {
-            k.decode(): v.decode()
-            for k, v in headers
-        }
-        req.addr = scope['client']
-        req.asgi_scope = scope
+        handler, captures = match_route_with_method(scope["path"], method, self.routes)
+        if handler is None or captures is None:
+            return False  # the next connector (or the 404 page) answers
 
-        if (route := match_route_with_method(req.path, Methods(scope['method'].upper()), self.routes))[0] != None:
-            body = b''
-            while True:
-                recvscope = await receive()
-                assert recvscope['type'] == 'http.request'
-
-                body += recvscope['body']
-                # bugfix: body length should be checked with <=
-                assert len(body) <= reugin.max_request_body, "Max body length exceeded" 
-                if recvscope['more_body'] == False:
-                    break
-            req.body = body # removed .decode() - body may be binary if, for example, form with binary file is submitted
-            resp: Response | JsonType | Tag = await route[0](req, *route[1])
-            if not isinstance(resp, Response):
-                if isinstance(resp, Tag):
-                    resp = Response(200, "text/html", resp.render())
-                elif isinstance(resp, dict):
-                    resp = Response(200, "application/json", json.dumps(resp))
-                else:
-                    assert False, f"Expected Tag or Response, got {type(resp)}"
-            await send({
-                'type': 'http.response.start',
-                'status': resp.code,
-                'headers': [
-                    [b'Content-Type', resp.content_type.encode()],
-                    *[[x.encode(), str(y).encode()] for x, y in resp.headers.items()]
-                ],
-            })
-            await send({
-                'type': 'http.response.body',
-                'body': resp.body.encode() if not isinstance(resp, BinaryResponse) else resp.body, # type: ignore
-            })
-            return True # finished
-        else:
-            return False # don't send 404 - this will be handled by root server (or further connectors)
+        body = await read_body(receive, reugin.max_request_body)
+        result = await handler(Request(scope, body), *captures)
+        await to_response(result).send(send)
+        return True

@@ -1,6 +1,7 @@
-import enum
+from enum import StrEnum
 
-class Methods(enum.Enum):
+
+class Methods(StrEnum):
     GET = "GET"
     POST = "POST"
     HEAD = "HEAD"

@@ -1,59 +1,85 @@
-from typing import List, Tuple
-from .types import HeadersType
+from collections.abc import Mapping
+
+from .types import Headers
+
+
+class MultipartError(ValueError):
+    """The body isn't valid multipart/form-data."""
+
+
+def parse_header_options(value: str) -> tuple[str, dict[str, str]]:
+    """Split a header like `form-data; name="file"; filename="a.png"` into its value and options."""
+    main, *parts = value.split(";")
+    options: dict[str, str] = {}
+    for part in parts:
+        key, sep, option = part.strip().partition("=")
+        if not sep:
+            continue
+        option = option.strip()
+        if len(option) >= 2 and option[0] == option[-1] == '"':
+            option = option[1:-1]
+        options[key.strip().lower()] = option
+    return main.strip().lower(), options
+
 
 class MultipartFormDataEntry:
-    def __init__(self, data: bytes, content_type: str, name: str, filename: str | None = None, headers: HeadersType | None = None):
+    """One field of a multipart/form-data body: a form value or an uploaded file."""
+
+    def __init__(
+        self,
+        data: bytes,
+        content_type: str,
+        name: str,
+        filename: str | None = None,
+        headers: Headers | None = None,
+    ) -> None:
         self.data = data
         self.content_type = content_type
         self.name = name
         self.filename = filename
-        self.headers: HeadersType = headers if headers is not None else {}
+        self.headers: Headers = headers if headers is not None else {}
+
+    @property
+    def text(self) -> str:
+        return self.data.decode()
 
     @classmethod
-    def from_base(cls, body: bytes, headers: HeadersType):
-        assert "content-disposition" in headers, "Content-Disposition is expected"
-        content_disp = list(i.strip() for i in headers['content-disposition'].split(";"))
-        assert content_disp[0] == "form-data", "Content-Disposition should be form-data"
-        cd_attributes = dict(x.strip().split("=") for x in content_disp[1:])
-        assert "name" in cd_attributes, "Content-Disposition should have a name attribute"
+    def from_base(cls, body: bytes, headers: Headers) -> "MultipartFormDataEntry":
+        if "content-disposition" not in headers:
+            raise MultipartError("a part has no Content-Disposition")
+        disposition, options = parse_header_options(headers["content-disposition"])
+        if disposition != "form-data" or "name" not in options:
+            raise MultipartError("a part's Content-Disposition is not form-data with a name")
+        content_type = headers.get("content-type", "text/plain")
+        return cls(body, content_type, options["name"], options.get("filename"), headers)
 
-        name = cd_attributes["name"]
-        if name.startswith("\"") and name.endswith("\""):
-            name = name[1:-1]
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.name!r}, {self.data!r})"
 
-        filename = cd_attributes.get("filename")
-        if filename is not None and filename.startswith("\"") and filename.endswith("\""):
-            filename = filename[1:-1]
 
-        return cls(body, headers["content-type"], name, filename, headers)
-    
-    def __repr__(self):
-        return f"{self.__class__.__name__}({repr(self.name)}, {repr(self.data)})"
+def parse_multipart_formdata(headers: Mapping[str, str], body: bytes) -> list[MultipartFormDataEntry]:
+    """Parse a multipart/form-data body. `headers` are the request's, with lowercase names."""
+    content_type, options = parse_header_options(headers.get("content-type", ""))
+    if content_type != "multipart/form-data":
+        raise MultipartError("Content-Type is not multipart/form-data")
+    if not options.get("boundary"):
+        raise MultipartError("Content-Type has no boundary")
 
-def parse_multipart_formdata(headers: HeadersType, body: bytes):
-    assert "content-type" in headers, "Content-Type is expected"
-    assert headers["content-type"].split(";")[0].strip().lower() == "multipart/form-data", "Content-Type is not multipart/form-data"
-    assert int(headers["content-length"]) == len(body), "body size is different from content-length"
+    parts = body.split(b"--" + options["boundary"].encode("latin-1"))
+    # parts[0] is the preamble; the last part starts with the closing "--".
+    if len(parts) < 2 or not parts[-1].startswith(b"--"):
+        raise MultipartError("the body does not end with the closing boundary")
 
-    ct_attributes = dict(x.strip().split("=") for x in headers["content-type"].split(";")[1:])
-    assert "boundary" in ct_attributes, "multipart/form-data should have boundary attribute in content-type"
-    boundary_base = ct_attributes['boundary']
-    boundary_start = ("--" + boundary_base).encode()
-
-    entries = body.split(boundary_start)
-    print(entries)
-    assert entries[0] == b"" and entries[-1] == b"--\r\n", "invalid form data"
-    del entries[0]
-    del entries[-1]
-
-    entries = [entry[2:-2] for entry in entries]
-    entries_with_headers: List[Tuple[bytes, HeadersType]] = []
-    for entry in entries:
-        entry_headers = entry.split(b"\r\n\r\n")[0]
-        entry_content = b"\r\n\r\n".join(entry.split(b"\r\n\r\n")[1:])
-        entry_headers = (tuple(map(lambda x: x.decode().strip(), header.split(b":", 1))) for header in entry_headers.split(b"\r\n"))
-        entry_headers = dict((x.lower(), y) for x, y in entry_headers)
-
-        entries_with_headers.append((entry_content, entry_headers))
-    
-    return [MultipartFormDataEntry.from_base(entry[0], entry[1]) for entry in entries_with_headers]
+    entries: list[MultipartFormDataEntry] = []
+    for part in parts[1:-1]:
+        part = part.removeprefix(b"\r\n").removesuffix(b"\r\n")
+        raw_headers, sep, content = part.partition(b"\r\n\r\n")
+        if not sep:
+            raise MultipartError("a part has no header block")
+        part_headers: Headers = {}
+        for line in raw_headers.split(b"\r\n"):
+            name, colon, value = line.decode("latin-1").partition(":")
+            if colon:
+                part_headers[name.strip().lower()] = value.strip()
+        entries.append(MultipartFormDataEntry.from_base(content, part_headers))
+    return entries

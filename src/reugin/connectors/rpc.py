@@ -1,74 +1,87 @@
-from .base import BaseConnector
-from ..response import JSONResponse
-import json
-import urllib
-import logging
+from __future__ import annotations
 
-class RemoteCall:
-    def __init__(self):
-        self.path = None
-        self.body = None
-        self.method = None
-        self.params = None
-        self.headers = None
-        self.addr = None
-        self._asgi_scope = None
+import inspect
+import json
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, override
+
+from ..request import Request
+from ..response import JSONResponse
+from .base import BaseConnector, read_body
+
+if TYPE_CHECKING:
+    from ..server import Reugin
+    from ..types import Receive, Scope, Send
+
+logger = logging.getLogger("reugin")
+
+type RPCHandler = Callable[..., Awaitable[Any]]
+"""`async def fn(call: RemoteCall, *args: JSON) -> JSON`"""
+
+
+class RemoteCall(Request):
+    """The request behind an RPC call. Same fields as `Request`."""
+
+
+def error(code: int, reason: str) -> JSONResponse:
+    return JSONResponse(code, {"status": "err", "reason": reason})
+
 
 class RPCConnector(BaseConnector):
-    def __init__(self, rpc_scope):
+    """Exposes async functions at `/_reuginpowered_/rpc/<rpc_scope>/<name>?args=<JSON array>`.
+
+    The function gets the call and the decoded arguments, and its return value is sent back as JSON.
+    """
+
+    def __init__(self, rpc_scope: str) -> None:
         self.rpc_scope = rpc_scope
-        self.rpcs = {}
-    
-    def rpc(self, rpc_name=None):
-        def inner(fn):
-            nonlocal rpc_name
-            if rpc_name is None:
-                rpc_name = fn.__code__.co_name
-            assert rpc_name not in self.rpcs, "RPC Call with this name exists already"
-            self.rpcs[rpc_name] = fn
+        self.rpcs: dict[str, RPCHandler] = {}
+
+    @property
+    def prefix(self) -> str:
+        return f"/_reuginpowered_/rpc/{self.rpc_scope}/"
+
+    def rpc[F: RPCHandler](self, rpc_name: str | None = None) -> Callable[[F], F]:
+        def register(fn: F) -> F:
+            name = rpc_name or fn.__name__
+            if name in self.rpcs:
+                raise ValueError(f"an RPC named {name!r} is already registered")
+            self.rpcs[name] = fn
             return fn
-        return inner
-    
-    async def process_scope(self, scope, receive, send, reugin):
-        if scope['type'] != 'http':
+
+        return register
+
+    @override
+    async def process_scope(self, scope: Scope, receive: Receive, send: Send, reugin: Reugin) -> bool:
+        if scope["type"] != "http" or not scope["path"].startswith(self.prefix):
             return False
 
+        fn = self.rpcs.get(scope["path"].removeprefix(self.prefix))
+        if fn is None:
+            await error(404, "rpc not found").send(send)
+            return True
+
+        call = RemoteCall(scope, await read_body(receive, reugin.max_request_body))
         try:
-            req = RemoteCall()
-            req.path = scope['path']
-            req.method = scope['method']
-            req.params = dict(qc.split("=") for qc in scope['query_string'].decode().split("&")) if len(scope['query_string'].decode().strip()) > 0 else {}
-            req.headers = dict(map(lambda x: (y.decode() for y in x), scope['headers']))
-            req.addr = scope['client']
-            req._asgi_scope = scope
+            args: object = json.loads(call.params.get("args", "[]"))
+        except json.JSONDecodeError:
+            await error(400, "wrong json").send(send)
+            return True
+        if not isinstance(args, list):
+            await error(400, "args must be a JSON array").send(send)
+            return True
 
-            if not req.path.startswith(f"/_reuginpowered_/rpc/{self.rpc_scope}/"):
-                return False
-            
-            for rpc_name, rpc in self.rpcs.items():
-                if req.path == f"/_reuginpowered_/rpc/{self.rpc_scope}/{rpc_name}":
-                    body = b''
-                    while True:
-                        recvscope = await receive()
-                        assert recvscope['type'] == 'http.request'
+        try:
+            inspect.signature(fn).bind(call, *args)
+        except TypeError:
+            await error(400, "wrong arguments").send(send)
+            return True
 
-                        body += recvscope['body']
-                        if recvscope['more_body'] == False:
-                            break
-                        assert len(body) >= reugin.max_request_body and reugin.max_request_body >= 0, "Max body length exceeded"
-                    req.body = body.decode()
-                    try:
-                        await JSONResponse(200, json.dumps(await rpc(req, *json.loads(urllib.parse.unquote(req.params.get("args", '%5B%5D')))))).send(send)
-                    except TypeError:
-                        await JSONResponse(400, {"status": "err", "reason": "wrong types"}).send(send)
-                    except json.JSONDecodeError:
-                        await JSONResponse(400, {"status": "err", "reason": "wrong json"}).send(send)
-                    except Exception as e:
-                        logging.exception(e)
-                        await JSONResponse(500, {"status": "err", "reason": "internal server error"}).send(send)
-                    return True
-
-            # await JSONResponse(404, {"status": "err", "reason": "rpc not found"}).send(send)
-            return False # don't send 404 - this will be handled by root server (or further connectors)
-        except Exception as e:
-            raise RuntimeError(e) # don't send 500 - this will be handled by root server (or errorhooks)
+        try:
+            result = JSONResponse(200, await fn(call, *args))
+        except Exception:
+            logger.exception("RPC %s failed", scope["path"])
+            result = error(500, "internal server error")
+        await result.send(send)
+        return True
