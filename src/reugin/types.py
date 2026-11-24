@@ -9,6 +9,7 @@ type Message = MutableMapping[str, Any]
 """An ASGI event, received or sent."""
 type Receive = Callable[[], Awaitable[Message]]
 type Send = Callable[[Message], Awaitable[None]]
+type ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 type JSON = str | int | float | bool | list[JSON] | dict[str, JSON] | None
 type Headers = dict[str, str]

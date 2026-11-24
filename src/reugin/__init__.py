@@ -1,30 +1,34 @@
-from . import connectors, mounts, rhtml, unjustpython
+from . import browser, rhtml, unjustpython
 from ._meta import VERSION as __version__
-from .connectors.rpc import RemoteCall
+from .app import Reugin
 from .errors import HTTPError
-from .methods import Methods
-from .multipartformdata import parse_multipart_formdata
+from .multipart import MultipartEntry
 from .request import Request
-from .response import BinaryResponse, HTMLResponse, JSONResponse, Response
-from .server import Reugin
-
-methods = Methods  # the 0.2 name
+from .response import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse, redirect
+from .rpc import RPCFunction
+from .static import StaticFiles
+from .unjustpython import JSFunction, jsdef
+from .websocket import WebSocket, WebSocketClosed
 
 __all__ = [
-    "BinaryResponse",
+    "FileResponse",
     "HTMLResponse",
     "HTTPError",
+    "JSFunction",
     "JSONResponse",
-    "Methods",
-    "RemoteCall",
+    "MultipartEntry",
+    "RPCFunction",
     "Request",
     "Response",
     "Reugin",
+    "StaticFiles",
+    "StreamingResponse",
+    "WebSocket",
+    "WebSocketClosed",
     "__version__",
-    "connectors",
-    "methods",
-    "mounts",
-    "parse_multipart_formdata",
+    "browser",
+    "jsdef",
+    "redirect",
     "rhtml",
     "unjustpython",
 ]

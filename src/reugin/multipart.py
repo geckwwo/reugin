@@ -7,22 +7,40 @@ class MultipartError(ValueError):
     """The body isn't valid multipart/form-data."""
 
 
+def _split_unquoted(value: str, separator: str) -> list[str]:
+    """Split on `separator`, except inside double quotes. Browsers send `"` in names as %22 and
+    leave backslashes alone, so a backslash is an ordinary character here."""
+    parts: list[str] = []
+    current: list[str] = []
+    quoted = False
+    for char in value:
+        if char == '"':
+            quoted = not quoted
+        elif char == separator and not quoted:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def _unquote(value: str) -> str:
+    return value[1:-1] if len(value) >= 2 and value[0] == value[-1] == '"' else value
+
+
 def parse_header_options(value: str) -> tuple[str, dict[str, str]]:
     """Split a header like `form-data; name="file"; filename="a.png"` into its value and options."""
-    main, *parts = value.split(";")
+    main, *parts = _split_unquoted(value, ";")
     options: dict[str, str] = {}
     for part in parts:
         key, sep, option = part.strip().partition("=")
-        if not sep:
-            continue
-        option = option.strip()
-        if len(option) >= 2 and option[0] == option[-1] == '"':
-            option = option[1:-1]
-        options[key.strip().lower()] = option
+        if sep:
+            options[key.strip().lower()] = _unquote(option.strip())
     return main.strip().lower(), options
 
 
-class MultipartFormDataEntry:
+class MultipartEntry:
     """One field of a multipart/form-data body: a form value or an uploaded file."""
 
     def __init__(
@@ -44,7 +62,7 @@ class MultipartFormDataEntry:
         return self.data.decode()
 
     @classmethod
-    def from_base(cls, body: bytes, headers: Headers) -> "MultipartFormDataEntry":
+    def from_base(cls, body: bytes, headers: Headers) -> "MultipartEntry":
         if "content-disposition" not in headers:
             raise MultipartError("a part has no Content-Disposition")
         disposition, options = parse_header_options(headers["content-disposition"])
@@ -57,7 +75,7 @@ class MultipartFormDataEntry:
         return f"{type(self).__name__}({self.name!r}, {self.data!r})"
 
 
-def parse_multipart_formdata(headers: Mapping[str, str], body: bytes) -> list[MultipartFormDataEntry]:
+def parse_multipart(headers: Mapping[str, str], body: bytes) -> list[MultipartEntry]:
     """Parse a multipart/form-data body. `headers` are the request's, with lowercase names."""
     content_type, options = parse_header_options(headers.get("content-type", ""))
     if content_type != "multipart/form-data":
@@ -70,7 +88,7 @@ def parse_multipart_formdata(headers: Mapping[str, str], body: bytes) -> list[Mu
     if len(parts) < 2 or not parts[-1].startswith(b"--"):
         raise MultipartError("the body does not end with the closing boundary")
 
-    entries: list[MultipartFormDataEntry] = []
+    entries: list[MultipartEntry] = []
     for part in parts[1:-1]:
         part = part.removeprefix(b"\r\n").removesuffix(b"\r\n")
         raw_headers, sep, content = part.partition(b"\r\n\r\n")
@@ -78,8 +96,13 @@ def parse_multipart_formdata(headers: Mapping[str, str], body: bytes) -> list[Mu
             raise MultipartError("a part has no header block")
         part_headers: Headers = {}
         for line in raw_headers.split(b"\r\n"):
-            name, colon, value = line.decode("latin-1").partition(":")
+            # Browsers send non-ASCII file and field names as UTF-8.
+            try:
+                text = line.decode()
+            except UnicodeDecodeError:
+                text = line.decode("latin-1")
+            name, colon, value = text.partition(":")
             if colon:
                 part_headers[name.strip().lower()] = value.strip()
-        entries.append(MultipartFormDataEntry.from_base(content, part_headers))
+        entries.append(MultipartEntry.from_base(content, part_headers))
     return entries

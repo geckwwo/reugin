@@ -1,17 +1,20 @@
+"""rhtml: HTML written as Python calls.
+
+h.div(h.p("Hi"), class_="card")  # <div class="card"><p>Hi</p></div>
+"""
+
 import html
-from collections.abc import Iterable, Sequence
-from pathlib import Path
+from collections.abc import Iterable, Iterator
+from itertools import chain
 from typing import ClassVar, cast, override
 
-from .misc import AttrValue, EmptyAttr, JSFunction, Property
+from ..unjustpython import JSCall, JSFunction, JSObject, page_script
 
 __all__ = [
-    "CSSInjection",
+    "AttrValue",
     "Child",
     "Document",
     "HeadInjection",
-    "IncludeFile",
-    "IncludeString",
     "Tag",
     "a",
     "abbr",
@@ -21,7 +24,6 @@ __all__ = [
     "audio",
     "b",
     "base",
-    "bind",
     "blockquote",
     "br",
     "button",
@@ -44,6 +46,7 @@ __all__ = [
     "figure",
     "footer",
     "form",
+    "fragment",
     "h1",
     "h2",
     "h3",
@@ -76,6 +79,7 @@ __all__ = [
     "pre",
     "progress",
     "q",
+    "raw",
     "s",
     "samp",
     "script",
@@ -86,6 +90,7 @@ __all__ = [
     "span",
     "strong",
     "style",
+    "stylesheet",
     "sub",
     "summary",
     "sup",
@@ -109,20 +114,42 @@ __all__ = [
 ]
 
 
+type AttrValue = str | int | float | bool | JSFunction[...] | JSCall | None
+"""None and False leave the attribute out; True renders it without a value. A JavaScript function
+(see `reugin.jsdef`) renders as a call: `onclick=save` gives `onclick="window.save()"`."""
+
+
 class HeadInjection:
     """A tag that belongs in the page's <head>, declared from anywhere in the body.
 
-    `Document` collects them and keeps one per name, so a component can ask for its stylesheet
-    however many times it appears.
+    `Document` keeps one per key, so a component can ask for its stylesheet however many times it appears.
     """
 
-    def __init__(self, name: str, tag: "Tag") -> None:
-        self.name = name
+    def __init__(self, key: str, tag: "Tag") -> None:
+        self.key = key
         self.tag = tag
 
 
-type Child = Tag | HeadInjection | Property | str | int | float | None
-"""What a tag can contain. None and booleans render as nothing, which helps with `cond and h.p(...)`."""
+type Leaf = Tag | HeadInjection | str | int | float | bool | None
+type Child = Leaf | Iterable[Child]
+"""What a tag can contain. Lists and generators are flattened; None and booleans render as nothing,
+which helps with `done and h.p("Saved")`. Text is escaped."""
+
+
+def flatten(children: Iterable[Child]) -> list[Leaf]:
+    leaves: list[Leaf] = []
+    for child in children:
+        if child is None or isinstance(child, Tag | HeadInjection | str | int | float):
+            leaves.append(child)
+        elif isinstance(child, bytes | bytearray):
+            raise TypeError("rhtml takes text, not bytes: decode it first")
+        else:
+            try:
+                nested = list(child)
+            except TypeError:
+                raise TypeError(f"a {type(child).__name__} can't go inside a tag") from None
+            leaves += flatten(nested)
+    return leaves
 
 
 def attribute_name(name: str) -> str:
@@ -134,134 +161,143 @@ def render_attribute(name: str, value: AttrValue) -> str:
     match value:
         case None | False:
             return ""
-        case True | EmptyAttr():
+        case True:
             return name
         case JSFunction():
-            text = f"{value.name}();"
+            text = f"window.{value.name}()"  # see JSCall: a bare name could hit the element's own method
+        case JSCall():
+            text = value.code
         case _:
             text = str(value)
     return f'{name}="{html.escape(text, quote=True)}"'
 
 
+def js_references(values: Iterable[AttrValue]) -> Iterator[JSObject]:
+    for value in values:
+        if isinstance(value, JSFunction):
+            yield value
+        elif isinstance(value, JSCall):
+            yield from value.uses
+
+
 class Tag:
-    tag: ClassVar[str] = "NONE"
+    tag: ClassVar[str] = ""
     void: ClassVar[bool] = False
     """Void elements (<img>, <input>, ...) have no content and no closing tag."""
     raw_text: ClassVar[bool] = False
-    """<script> and <style> keep their text as is."""
+    """<script> and <style> keep their text unescaped, apart from `</` and `<!--`, which would end them."""
 
     def __init__(self, *children: Child, **attributes: AttrValue) -> None:
-        self.children: list[Child] = list(children)
-        self.attributes: dict[str, AttrValue] = {attribute_name(k): v for k, v in attributes.items()}
+        self.children = flatten(children)
+        self.attributes = {attribute_name(name): value for name, value in attributes.items()}
+        if self.void and any(child is not None and not isinstance(child, HeadInjection) for child in self.children):
+            raise ValueError(f"<{self.tag}> is a void element and can't have content")
 
     def render_attributes(self) -> str:
-        pairs = [*self.attributes.items(), *((p.name, p.value) for p in self.children if isinstance(p, Property))]
-        rendered = [text for name, value in pairs if (text := render_attribute(name, value))]
-        return "".join(" " + text for text in rendered)
+        return "".join(" " + text for name, value in self.attributes.items() if (text := render_attribute(name, value)))
 
-    def render_child(self, child: Child) -> str:
+    def render_child(self, child: Leaf) -> str:
         match child:
             case Tag():
                 return child.render()
-            case HeadInjection() | Property() | None | bool():
+            case HeadInjection() | None | bool():
                 return ""
             case str() if self.raw_text:
-                return child
+                # Script and style text isn't HTML-escaped, but it mustn't end its element early.
+                return child.replace("</", "<\\/").replace("<!--", "<\\!--")
             case _:
                 return html.escape(str(child))
 
-    def render_body(self, children: Iterable[Child]) -> str:
-        return " ".join(text for child in children if (text := self.render_child(child)))
+    def render_children(self) -> str:
+        return "".join(self.render_child(child) for child in self.children)
 
     def render(self) -> str:
         if self.void:
-            if any(not isinstance(child, Property | HeadInjection) for child in self.children):
-                raise ValueError(f"<{self.tag}> is a void element and can't have content")
             return f"<{self.tag}{self.render_attributes()}>"
-        return f"<{self.tag}{self.render_attributes()}>{self.render_body(self.children)}</{self.tag}>"
+        return f"<{self.tag}{self.render_attributes()}>{self.render_children()}</{self.tag}>"
 
-    def __add__(self, other: Child) -> "Tag":
-        """`tag + other` puts the two side by side, without a wrapping element."""
-        if isinstance(self, bind):
-            return bind(*self.children, other)
-        return bind(self, other)
+    def walk(self) -> Iterator["Tag | HeadInjection"]:
+        """This tag and everything inside it, head injections included."""
+        yield self
+        for child in self.children:
+            if isinstance(child, Tag):
+                yield from child.walk()
+            elif isinstance(child, HeadInjection):
+                yield child
+                yield from child.tag.walk()
 
     def __str__(self) -> str:
         return self.render()
 
 
-class bind(Tag):
+class fragment(Tag):
     """Several children side by side, without a wrapping element."""
 
     @override
     def render(self) -> str:
-        return self.render_body(self.children)
+        return self.render_children()
+
+
+class raw(Tag):
+    """HTML as it is, not escaped. Only for markup you trust."""
+
+    def __init__(self, markup: str) -> None:
+        super().__init__()
+        self.markup = markup
+
+    @override
+    def render(self) -> str:
+        return self.markup
 
 
 class Document(Tag):
-    """A whole HTML page. Head injections found anywhere in the body end up in <head>."""
+    """A whole HTML page: `h.Document(h.h1("Notes"), ..., title="Notes", lang="en")`.
+
+    Head injections from anywhere in the page go into <head>, and so does one <script> with every
+    JavaScript function the page's attributes use. Event attributes such as `onload=` go on <body>;
+    the others on <html>.
+    """
 
     tag = "html"
 
     def __init__(
-        self,
-        body: Child | list[Child] | tuple[Child, ...],
-        head: Sequence[Child] | None = None,
-        **attributes: AttrValue,
+        self, *body: Child, head: Iterable[Child] = (), title: str | None = None, **attributes: AttrValue
     ) -> None:
-        super().__init__(**attributes)
-        self.body: list[Child] = list(body) if isinstance(body, list | tuple) else [body]
-        self.head: list[Child] = list(head or [])
-
-    def head_append(self, tag: "Tag") -> "Document":
-        self.head.append(tag)
-        return self
-
-    @override
-    def __add__(self, other: Child) -> "Document":
-        return Document([*self.body, other], self.head, **self.attributes)
-
-    def fetch_injections(self, children: Iterable[Child]) -> dict[str, "Tag"]:
-        injections: dict[str, Tag] = {}
-        for child in children:
-            if isinstance(child, HeadInjection):
-                injections[child.name] = child.tag
-            elif isinstance(child, Tag):
-                injections.update(self.fetch_injections(child.children))
-        return injections
+        super().__init__(*body, **{name: value for name, value in attributes.items() if not name.startswith("on")})
+        self.body_attributes = {name: value for name, value in attributes.items() if name.startswith("on")}
+        self.head = flatten(head)
+        self.title = title
 
     @override
     def render(self) -> str:
-        injected = "".join(tag.render() for tag in self.fetch_injections(self.body).values())
-        return (
-            f"<!DOCTYPE html><html{self.render_attributes()}>"
-            f'<head><meta charset="utf-8">{self.render_body(self.head)}{injected}</head>'
-            f"<body>{self.render_body(self.body)}</body></html>"
+        injections: dict[str, Tag] = {}
+        scripts: list[JSObject] = list(js_references(self.body_attributes.values()))
+        head_tags = [tag.walk() for tag in self.head if isinstance(tag, Tag)]
+        for node in chain(self.walk(), *head_tags):
+            if isinstance(node, HeadInjection):
+                injections.setdefault(node.key, node.tag)
+            else:
+                scripts += js_references(node.attributes.values())
+        code = page_script(scripts)
+        body_attributes = "".join(
+            " " + text for name, value in self.body_attributes.items() if (text := render_attribute(name, value))
+        )
+        return "".join(
+            [
+                f"<!DOCTYPE html><html{self.render_attributes()}><head>",
+                '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+                f"<title>{html.escape(self.title)}</title>" if self.title is not None else "",
+                "".join(self.render_child(child) for child in self.head),
+                "".join(tag.render() for tag in injections.values()),
+                f"<script>{code}</script>" if code else "",
+                f"</head><body{body_attributes}>{self.render_children()}</body></html>",
+            ]
         )
 
 
-class IncludeFile(Tag):
-    """The contents of a file, as raw HTML, read every time the page renders."""
-
-    def __init__(self, filename: str | Path) -> None:
-        super().__init__()
-        self.contents = Path(filename)
-
-    @override
-    def render(self) -> str:
-        return self.contents.read_text()
-
-
-class IncludeString(Tag):
-    """A string of raw HTML, not escaped."""
-
-    def __init__(self, data: str) -> None:
-        super().__init__()
-        self.contents = data
-
-    @override
-    def render(self) -> str:
-        return self.contents
+def stylesheet(href: str) -> HeadInjection:
+    """A <link rel="stylesheet"> for <head>, added once however many times it's used."""
+    return HeadInjection(href, link(rel="stylesheet", href=href))
 
 
 def _tag(name: str, *, void: bool = False, raw_text: bool = False) -> type[Tag]:
@@ -362,10 +398,3 @@ ul = _tag("ul")
 var = _tag("var")
 video = _tag("video")
 wbr = _tag("wbr", void=True)
-
-
-class CSSInjection(HeadInjection):
-    """A stylesheet link for <head>, added once however many times it's used."""
-
-    def __init__(self, name: str, css_link: str) -> None:
-        super().__init__(name, link(href=css_link, rel="stylesheet"))

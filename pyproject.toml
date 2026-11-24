@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reugin"
 dynamic = ["version"]
-description = "A small ASGI web framework: routes, an HTML builder and JSON RPC, with no dependencies."
+description = "A small ASGI web framework for interactive pages in one file: Python click handlers run in the browser and call the server directly. No dependencies."
 readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
