@@ -1,28 +1,17 @@
-from typing import Callable, Any, Awaitable, Dict, TypeVar, List
-from .connectors.base import BaseConnector
-from .request import Request
-from .response import Response
+"""Type aliases shared across Reugin. This module imports nothing from the package."""
 
-TConn = TypeVar("TConn", bound=BaseConnector)
-TEHook = TypeVar("TEHook", bound="ErrorHookType")
-class ReuginPlaceholder:
-    max_request_body: int = 256 * 1024
-    def connect(self, connector: TConn, priority: int = 100) -> TConn:
-        ...
-    def errorhook(self, priority: int = 100) -> Callable[[TEHook], TEHook]:
-        ...
-    async def __call__(self, scope: ScopeType, receive: ReceiveType, send: SendType):
-        ...
+from collections.abc import Awaitable, Callable, MutableMapping
+from typing import Any
 
-ScopeType = Dict[str, Any]
-ReceiveType = Callable[[], Awaitable[ScopeType]]
-SendType = Callable[[ScopeType], Awaitable[None]]
+type Scope = MutableMapping[str, Any]
+"""The ASGI connection scope."""
+type Message = MutableMapping[str, Any]
+"""An ASGI event, received or sent."""
+type Receive = Callable[[], Awaitable[Message]]
+type Send = Callable[[Message], Awaitable[None]]
+type ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
-ErrorHookType = Callable[[ScopeType, ReceiveType, SendType, ReuginPlaceholder, Exception], Awaitable[bool]]
-LifespanHandler = Callable[[], Awaitable[None]]
+type JSON = str | int | float | bool | list[JSON] | dict[str, JSON] | None
+type Headers = dict[str, str]
 
-HeadersType = Dict[str, str]
-
-HttpRouteHandler = Callable[[Request], Awaitable[Response | str]]
-
-JsonType = str | int | float | None | List["JsonType"] | Dict[str, "JsonType"]
+type LifespanHandler = Callable[[], Awaitable[None]]

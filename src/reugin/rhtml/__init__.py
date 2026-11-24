@@ -1,2 +1,1 @@
-from .tags import *
-from .misc import *
+from .tags import *  # noqa: F403

@@ -1,3 +1,54 @@
 [build-system]
-requires = ['setuptools>=42']
-build-backend = 'setuptools.build_meta'
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reugin"
+dynamic = ["version"]
+description = "A small ASGI web framework for interactive pages in one file: Python click handlers run in the browser and call the server directly. No dependencies."
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "geckwwo" }]
+requires-python = ">=3.12"
+dependencies = []
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/geckwwo/reugin"
+Issues = "https://github.com/geckwwo/reugin/issues"
+Changelog = "https://github.com/geckwwo/reugin/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = ["pyright", "ruff"]
+
+[tool.setuptools.dynamic]
+version = { attr = "reugin._meta.VERSION" }
+
+[tool.setuptools.package-data]
+reugin = ["py.typed"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+reportUnnecessaryTypeIgnoreComment = "error"
+executionEnvironments = [{ root = "src" }, { root = "tests", extraPaths = ["src"] }]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
